@@ -1,14 +1,17 @@
 flowchart TD
-  Start[Landing Page]
-  SignUpPage[Sign Up Page]
-  SignInPage[Sign In Page]
-  AuthAPI[Authentication API Endpoint]
-  DashboardPage[Dashboard Page]
-  Start -->|Select Sign Up| SignUpPage
-  Start -->|Select Sign In| SignInPage
-  SignUpPage -->|Submit Credentials| AuthAPI
-  SignInPage -->|Submit Credentials| AuthAPI
-  AuthAPI -->|Success| DashboardPage
-  AuthAPI -->|Error| SignUpPage
-  AuthAPI -->|Error| SignInPage
-  DashboardPage -->|Click Logout| Start
+    Home[Home Page] --> Auth[Sign In or Sign Up]
+    Auth --> Dashboard[User Dashboard]
+    Dashboard --> Library[Library Management]
+    Dashboard --> Discover[Search and Discover Books]
+    Discover --> BookSelect[Select Book Card]
+    BookSelect --> RequestTrade[Request Trade]
+    RequestTrade --> TradeCreated[Trade Created]
+    TradeCreated --> TradePage[Trade Details Page]
+    TradePage --> Chat[Real Time Chat]
+    Chat --> CompleteTrade[Confirm Completion]
+    CompleteTrade --> Rating[Submit Rating]
+    Dashboard --> Wishlist[Wishlist Management]
+    Dashboard --> Ratings[View Ratings]
+    Dashboard --> AdminPanel[Admin Analytics Panel]
+    AdminPanel --> Analytics[View Key Metrics]
+    AdminPanel --> Moderation[Moderation Tools]

@@ -1,179 +1,230 @@
-# Backend Structure Document
-
-This document outlines the backend architecture, hosting, and infrastructure for the **codeguide-starter** project. It uses plain language so anyone can understand how the backend is set up and how it supports the application.
+# Backend Structure Document for Book Barter
 
 ## 1. Backend Architecture
 
-- **Framework and Design Pattern**
-  - We use **Next.js API Routes** to handle all server-side logic. These routes live alongside the frontend code in the same repository, making development and deployment simpler.
-  - The backend follows a **layered pattern**:
-    1. **API Layer**: Receives requests (login, registration, data fetch).  
-    2. **Service Layer**: Contains the core business logic (user validation, password hashing).  
-    3. **Data Access Layer**: Talks to the database via a simple ORM (e.g., Prisma or TypeORM).
+This section outlines the overall design and key patterns of the backend.
 
-- **Scalability**
-  - Stateless API routes can scale horizontally—new instances can spin up on demand.  
-  - We can add caching or a message queue (e.g., Redis or RabbitMQ) without changing the core code.
+### Architecture Overview
+- The backend is built as a modular monolith using **Next.js** (App Router). All business logic, API routes, and server actions live under the `/app` directory.  
+- We follow a **domain-driven** folder structure. Key domains are:  
+  • `library` (books management)  
+  • `trades` (trade negotiation and messaging)  
+  • `search` (full-text and geospatial discovery)  
+  • `admin` (analytics and moderation)  
 
-- **Maintainability**
-  - Code for each feature is grouped by route (authentication, dashboard).  
-  - A service layer separates complex logic from request handling.
+### Design Patterns and Frameworks
+- **API Routes & Server Actions** (Next.js): Provide RESTful endpoints alongside server-side data mutations without client-only code.  
+- **Drizzle ORM**: A schema-first ORM for type-safe database access.  
+- **Auth.js**: Handles Email/Password and Google OAuth flows.  
+- **Real-time Provider**: Pusher or Ably for live chat.  
+- **Background Jobs**: Inngest or Trigger.dev for email notifications and file scanning.  
 
-- **Performance**
-  - Lightweight Node.js handlers keep response times low.  
-  - Future use of database connection pooling and Redis for caching repeated queries.
+### Scalability, Maintainability, and Performance
+- **Scalability**:  
+  • Modular domains can be scaled or extracted as services in the future.  
+  • Cloud hosting (Vercel) auto-scales serverless functions.  
+- **Maintainability**:  
+  • Clear separation of concerns: UI components (`/components`), business logic (`/lib`), data layer (`/db`).  
+  • TypeScript end-to-end ensures consistency.  
+- **Performance**:  
+  • Server-side rendering (SSR) and incremental static regeneration (ISR) for key pages.  
+  • Caching of API responses via CDN (Cloudflare).  
+  • Database indexes on frequently queried fields (e.g., book titles, geolocation).  
 
 ## 2. Database Management
 
-- **Database Choice**
-  - We recommend **PostgreSQL** for structured data and reliable transactions.  
-  - In-memory caching can be added later with **Redis** for session tokens or frequently read data.
+### Technologies Used
+- **PostgreSQL** (SQL) with the **PostGIS** extension for geospatial data  
+- **Drizzle ORM** for type-safe schema definitions and queries  
+- **drizzle-kit** for migrations and schema versioning
 
-- **Data Storage and Access**
-  - Use an ORM like **Prisma** or **TypeORM** to map JavaScript/TypeScript objects to database tables.
-  - Connection pooling ensures efficient use of database connections under load.
-  - Migrations track schema changes over time, keeping development, staging, and production in sync.
+### Data Structure and Access
+- Data is defined in `/db/schema.ts` using Drizzle’s schema API.  
+- **Tables**: `users`, `books`, `trades`, `messages`, `ratings`, plus join tables for wishlists.  
+- **Geospatial**: The `users` and `books` tables include a `location` column of type `geography(Point,4326)`.  
+- **Access Patterns**:  
+  • CRUD operations via Drizzle queries.  
+  • Full-text and proximity searches using PostgreSQL’s `GIN` indexes and `ST_DWithin`.  
+  • Transactions for trade creation and completion.  
 
-- **Data Practices**
-  - Passwords are never stored in plain text—they are salted and hashed with **bcrypt** before saving.
-  - All outgoing data is typed and validated to prevent malformed records.
+### Data Management Practices
+- **Migrations**: Managed via `drizzle-kit migrate` commands.  
+- **Backups**: Scheduled daily snapshots of the database.  
+- **Connection Pooling**: Recommended provider (Neon, Supabase) handles pooling automatically.  
 
 ## 3. Database Schema
 
-### Human-Readable Format
-
-- **Users**
-  - **id**: Unique identifier  
-  - **email**: User’s email address (unique)  
-  - **password_hash**: Securely hashed password  
-  - **created_at**: Account creation timestamp
-
-- **Sessions**
-  - **id**: Unique session record  
-  - **user_id**: Links to a user  
-  - **token**: Random string for authentication  
-  - **expires_at**: When the token stops working  
-  - **created_at**: When the session was created
-
-- **DashboardItems** *(optional for dynamic data)*
-  - **id**: Unique record  
-  - **title**: Item title  
-  - **content**: Item details  
-  - **created_at**: When the item was added
+### Human-Readable Schema
+- **users**: id, name, email, password_hash, avatar_url, location (latitude & longitude), created_at  
+- **books**: id, owner_id (FK to users), title, author, description, photos (array of URLs), trade_visibility (enum: public, private), location (geography Point), created_at  
+- **trades**: id, requester_id (FK to users), owner_id (FK to users), book_id (FK to books), status (enum: pending, accepted, completed, cancelled), created_at, updated_at  
+- **messages**: id, trade_id (FK to trades), sender_id (FK to users), content, timestamp  
+- **ratings**: id, trade_id (FK to trades), rater_id (FK to users), ratee_id (FK to users), score (1–5), comment, created_at  
+- **wishlists**: user_id (FK), book_id (FK)  
 
 ### SQL Schema (PostgreSQL)
 ```sql
 -- Users table
 CREATE TABLE users (
-  id SERIAL PRIMARY KEY,
-  email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  avatar_url TEXT,
+  location GEOGRAPHY(Point,4326),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
--- Sessions table
-CREATE TABLE sessions (
-  id SERIAL PRIMARY KEY,
-  user_id INT REFERENCES users(id) ON DELETE CASCADE,
-  token VARCHAR(255) UNIQUE NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
--- Dashboard items table
-CREATE TABLE dashboard_items (
-  id SERIAL PRIMARY KEY,
+-- Books table
+CREATE TABLE books (
+  id UUID PRIMARY KEY,
+  owner_id UUID REFERENCES users(id),
   title TEXT NOT NULL,
-  content TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
+  author TEXT NOT NULL,
+  description TEXT,
+  photos TEXT[],
+  trade_visibility TEXT CHECK (trade_visibility IN ('public','private')) DEFAULT 'public',
+  location GEOGRAPHY(Point,4326),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
-```  
+
+-- Trades table
+CREATE TABLE trades (
+  id UUID PRIMARY KEY,
+  requester_id UUID REFERENCES users(id),
+  owner_id UUID REFERENCES users(id),
+  book_id UUID REFERENCES books(id),
+  status TEXT CHECK (status IN ('pending','accepted','completed','cancelled')) DEFAULT 'pending',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Messages table
+CREATE TABLE messages (
+  id UUID PRIMARY KEY,
+  trade_id UUID REFERENCES trades(id),
+  sender_id UUID REFERENCES users(id),
+  content TEXT NOT NULL,
+  timestamp TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Ratings table
+CREATE TABLE ratings (
+  id UUID PRIMARY KEY,
+  trade_id UUID REFERENCES trades(id),
+  rater_id UUID REFERENCES users(id),
+  ratee_id UUID REFERENCES users(id),
+  score INTEGER CHECK (score BETWEEN 1 AND 5),
+  comment TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Wishlists table
+CREATE TABLE wishlists (
+  user_id UUID REFERENCES users(id),
+  book_id UUID REFERENCES books(id),
+  PRIMARY KEY (user_id, book_id)
+);
+```
 
 ## 4. API Design and Endpoints
 
-- **Approach**: We follow a **RESTful** style, grouping related endpoints under `/api` directories.
+We follow a RESTful design under `/app/api`. All endpoints return JSON and use standard HTTP status codes.
 
-- **Key Endpoints**
-  - `POST /api/auth/register`  
-    • Accepts `{ email, password }`  
-    • Creates a new user and issues a session token  
-  - `POST /api/auth/login`  
-    • Accepts `{ email, password }`  
-    • Verifies credentials and returns a session token  
-  - `POST /api/auth/logout`  
-    • Invalidates the session token on the server  
-  - `GET /api/dashboard/data`  
-    • Requires a valid session  
-    • Returns user-specific data or dashboard items  
+### Authentication
+- `POST /api/auth/signup` — Create a new user account.  
+- `POST /api/auth/signin` — Sign in with email/password or Google OAuth.  
+- `POST /api/auth/signout` — Invalidate the session.  
 
-- **Communication**
-  - Frontend sends JSON requests; backend replies with JSON and appropriate HTTP status codes.  
-  - Protected routes check for a valid session token (in cookies or Authorization header).
+### Users
+- `GET /api/users/me` — Get current user profile.  
+- `PATCH /api/users/me` — Update profile or location.  
+
+### Books
+- `GET /api/books` — List books with optional filters (title, author, proximity).  
+- `GET /api/books/:id` — Get book details.  
+- `POST /api/books` — Add a new book (includes 4 photos).  
+- `PATCH /api/books/:id` — Update book info.  
+- `DELETE /api/books/:id` — Remove a book.  
+
+### Trades & Messages
+- `POST /api/trades` — Initiate a trade request.  
+- `GET /api/trades/:id` — Get trade details.  
+- `PATCH /api/trades/:id` — Update status (accept, complete, cancel).  
+- `GET /api/trades/:id/messages` — List messages in a trade chat.  
+- `POST /api/trades/:id/messages` — Send a new message.  
+
+### Ratings & Wishlist
+- `POST /api/ratings` — Submit a rating for a completed trade.  
+- `GET /api/ratings/:userId` — Get ratings for a user.  
+- `POST /api/wishlist` — Add a book to wishlist.  
+- `DELETE /api/wishlist/:bookId` — Remove from wishlist.  
 
 ## 5. Hosting Solutions
 
-- **Cloud Provider**:  
-  - **Vercel** (recommended) offers seamless Next.js deployments, auto-scaling, and built-in CDN.  
-  - Alternatively, **Netlify** or any Node.js-capable host will work.
+### Cloud Provider
+- **Vercel** hosts the Next.js app as serverless functions and static assets.  
+- Database hosted on **Neon** or **Supabase** (PostgreSQL with PostGIS).  
+- File storage via **Cloudflare R2** or **AWS S3** (for book photos).  
 
-- **Benefits**
-  - **Reliability**: Global servers and failover across regions.  
-  - **Scalability**: Auto-scale serverless functions based on traffic.  
-  - **Cost-Effectiveness**: Pay-per-use model means low cost for small projects.
+### Benefits
+- **Reliability**: Vercel SLAs ensure high uptime for API routes.  
+- **Scalability**: Automatic scaling of serverless functions.  
+- **Cost-Effectiveness**: Pay-as-you-go for compute, storage, and bandwidth.  
+- **CDN**: Vercel integrates a global CDN for static assets.
 
 ## 6. Infrastructure Components
 
-- **Load Balancer**
-  - Provided by the hosting platform—distributes API requests across function instances.
-
-- **CDN (Content Delivery Network)**
-  - Vercel’s global edge network caches static assets (CSS, JS, images) for faster page loads.
-
-- **Caching**
-  - **Redis** (optional) for session storage or caching dashboard queries to reduce database load.
-
-- **Object Storage**
-  - For file uploads or backups, integrate with AWS S3 or similar services.
-
-- **Message Queue**
-  - In future, use **RabbitMQ** or **Kafka** for background tasks (e.g., email notifications).
+- **Load Balancer**: Vercel’s built-in edge network distributes traffic.  
+- **Caching**:  
+  • **Cloudflare CDN** for static assets and API response caching.  
+  • **Upstash Redis** for rate limiting and short-term caches (e.g., search results).  
+- **Content Delivery Network (CDN)**: Global caching of JS, CSS, images.  
+- **Background Workers**: Inngest or Trigger.dev run on-demand jobs (emails, scans).  
+- **Real-time Layer**: Pusher or Ably websockets for live chat.  
 
 ## 7. Security Measures
 
-- **Authentication & Authorization**
-  - Passwords hashed with **bcrypt** and salted.  
-  - Session tokens stored in secure, HttpOnly cookies or Authorization headers.  
-  - Protected endpoints verify tokens before proceeding.
-
-- **Data Encryption**
-  - **HTTPS/TLS** encrypts data in transit.  
-  - Database connections use SSL to encrypt data between the app and the database.
-
-- **Input Validation**
-  - Every incoming request is validated (e.g., valid email format, password length) to prevent SQL injection or other attacks.
-
-- **Web Security Best Practices**
-  - Enable **CORS** policies to limit allowed origins.  
-  - Use **CSRF tokens** or same-site cookies to prevent cross-site requests.  
-  - Set secure headers with **Helmet** or a similar middleware.
+- **Authentication & Authorization**:  
+  • **Auth.js** for secure sessions (HTTP-only cookies).  
+  • Role-based access control for admin routes.  
+- **Data Encryption**:  
+  • In-transit: TLS everywhere (frontend, APIs, DB connections).  
+  • At-rest: Database provider’s encryption of disks.  
+- **Input Validation**:  
+  • **Zod** schemas on every endpoint and server action.  
+- **Rate Limiting**:  
+  • Upstash Redis enforces per-IP or per-user limits on endpoints.  
+- **Security Headers**:  
+  • CSP, HSTS, X-Frame-Options in Next.js middleware.  
+- **File Scanning**:  
+  • Background job to scan uploaded images for malware.  
+- **Monitoring & Auditing**:  
+  • Sentry for error tracking and performance monitoring.  
 
 ## 8. Monitoring and Maintenance
 
-- **Performance Monitoring**
-  - Integrate **Sentry** or **LogRocket** for real-time crash reporting and performance tracing.  
-  - Use Vercel’s built-in analytics to track request latencies and error rates.
+### Monitoring Tools
+- **Sentry**: Captures exceptions and performance traces.  
+- **Vercel Analytics**: Tracks request latencies and error rates.  
+- **Database Metrics**: CPU, connections, slow queries in Neon/Supabase dashboard.  
 
-- **Logging**
-  - Structured logs (JSON) for all API requests and errors, shipped to a log management service like **Datadog** or **Logflare**.
-
-- **Health Checks**
-  - Define a `/health` endpoint that returns a 200 status if the service is up and the database is reachable.
-
-- **Maintenance Strategies**
-  - Automated migrations run on deploy to keep the database schema up to date.  
-  - Scheduled dependency audits and security scans (e.g., `npm audit`).
-  - Regular backups of the database (daily or weekly depending on usage).
+### Maintenance Strategies
+- **Automated Migrations**: `drizzle-kit` runs in CI to apply new schema changes.  
+- **Dependency Updates**: Dependabot or Renovate for package upgrades.  
+- **Testing**:  
+  • **Vitest** for unit tests on business logic.  
+  • **Playwright** for end-to-end flows (signup, book listing, trade).  
+- **Onboarding**: Docker Compose script spins up Next.js, Postgres+PostGIS, and Redis locally.  
 
 ## 9. Conclusion and Overall Backend Summary
 
-The backend for **codeguide-starter** is built on Next.js API Routes and Node.js, paired with PostgreSQL for data and optional Redis for caching. It follows a clear layered architecture that keeps code easy to maintain and extend. With RESTful endpoints for authentication and data, secure practices like password hashing and HTTPS, and hosting on Vercel for scalability and global performance, this setup meets the project’s goals for a fast, secure, and developer-friendly foundation. Future enhancements—such as background job queues, advanced monitoring, or richer data models—can be added without disrupting the core structure.
+The Book Barter backend is a modern, type-safe, and scalable monolith powered by Next.js. Its modular domain structure keeps code organized while allowing future growth into microservices if needed. Key highlights:
+
+- **Type-Safe ORM** with Drizzle and PostgreSQL/PostGIS for robust data management.  
+- **Secure Authentication** via Auth.js and strict security practices.  
+- **Real-Time Chat** and **Background Jobs** support seamless trade negotiations and notifications.  
+- **Serverless Hosting** on Vercel provides auto-scaling, global CDN, and cost efficiency.  
+- **Monitoring & Testing** ensure reliability and fast issue resolution.  
+
+This backend structure aligns perfectly with the project goals: enabling rapid development of book trading, geospatial discovery, and user collaboration, all on a solid, maintainable foundation.
